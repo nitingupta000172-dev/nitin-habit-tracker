@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, toDateStr, offsetDate } from '../lib/supabase';
 import { getHabitsForDay } from '../data/habits';
 
-const TODAY = toDateStr();
+// NOTE: do NOT cache today's date at module load time.
+// toDateStr() is called fresh inside each function so the app
+// always uses the real current date — even after an overnight
+// PWA session without a page reload.
 
 export function useHabits() {
   const [checks, setChecks]         = useState({});   // { habit_id: boolean }
@@ -14,14 +17,21 @@ export function useHabits() {
 
   // ── Fetch today's checks ─────────────────────────────────
   const fetchToday = useCallback(async () => {
+    // Compute the date fresh on every call — never rely on a
+    // stale module-level constant that could be from a prior day.
+    const today = toDateStr();
     try {
       const { data, error } = await supabase
         .from('habit_checks')
         .select('habit_id, checked')
-        .eq('date', TODAY);
+        .eq('date', today)
+        .eq('checked', true);   // only pull explicitly checked rows;
+                                // absence of a row = unchecked (clean default)
       if (error) throw error;
+      // Build a map of only the habits the user actually ticked today.
+      // Every other habit_id is simply absent → treated as false by the UI.
       const map = {};
-      data.forEach(r => { map[r.habit_id] = r.checked; });
+      data.forEach(r => { map[r.habit_id] = true; });
       setChecks(map);
     } catch (e) {
       console.warn('fetchToday failed (offline?)', e.message);
@@ -47,6 +57,7 @@ export function useHabits() {
       if (error) throw error;
 
       // Group by habit_id → Set of date strings
+      const today = toDateStr();   // fresh — used only for streak "include today" check
       const byId = {};
       data.forEach(r => {
         if (!byId[r.habit_id]) byId[r.habit_id] = new Set();
@@ -67,8 +78,8 @@ export function useHabits() {
           d.setDate(d.getDate() - 1);
           check = toDateStr(d);
         }
-        // If checked today already, include today in streak
-        if (datesSet.has(TODAY)) current++;
+        // If the user has already ticked this habit today, count today too
+        if (datesSet.has(today)) current++;
 
         // Longest streak: walk all sorted dates
         let longest = 0, run = 0, prev = null;
@@ -104,8 +115,9 @@ export function useHabits() {
 
     setSaving(true);
     try {
+      const today = toDateStr();   // fresh date at flush time, not at queue time
       const rows = Object.entries(queue).map(([habit_id, { checked, label }]) => ({
-        date: TODAY,
+        date: today,
         habit_id,
         habit_label: label,
         checked,
@@ -150,7 +162,7 @@ export function useHabits() {
     return () => clearTimeout(saveTimer.current);
   }, [fetchToday, fetchStreaks]);
 
-  // ── Derived stats ─────────────────────────────────────────
+  // ── Derived stats (always use live Date() so day is correct) ──
   const day = new Date().getDay();
   const sections = getHabitsForDay(day);
   const allItems = sections.flatMap(s => s.items);
