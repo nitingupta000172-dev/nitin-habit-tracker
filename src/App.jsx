@@ -1,11 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import BottomNav from './components/BottomNav';
 import TodayTab from './components/today/TodayTab';
 import WorkoutTab from './components/workout/WorkoutTab';
 import ProgressTab from './components/progress/ProgressTab';
 
-const TABS = { today: TodayTab, workout: WorkoutTab, progress: ProgressTab };
 const TAB_KEY = 'nh_last_tab';
+
+// All three tabs are mounted at all times — only visibility changes.
+// This preserves React state (inputs, scroll position, timers) across
+// tab switches, eliminating the "unsaved set disappears on tab switch" bug.
+const TABS = [
+  { id: 'today',    Component: TodayTab    },
+  { id: 'workout',  Component: WorkoutTab  },
+  { id: 'progress', Component: ProgressTab },
+];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState(
@@ -17,13 +25,20 @@ export default function App() {
     localStorage.setItem(TAB_KEY, tab);
   };
 
-  const ActiveTab = TABS[activeTab] ?? TodayTab;
-
   return (
     <div className="flex flex-col min-h-dvh max-w-lg mx-auto bg-bg relative">
-      {/* Tab content — key forces remount on tab switch for animation */}
-      <main key={activeTab} className="flex-1 flex flex-col overflow-y-auto scrollbar-hide">
-        <ActiveTab />
+      <main className="flex-1 relative overflow-hidden">
+        {TABS.map(({ id, Component }) => (
+          // display:none keeps the component mounted (state preserved)
+          // but removes it from layout and interaction when not active.
+          <div
+            key={id}
+            className="absolute inset-0 flex flex-col overflow-y-auto scrollbar-hide"
+            style={{ display: activeTab === id ? 'flex' : 'none' }}
+          >
+            <Component />
+          </div>
+        ))}
       </main>
       <BottomNav active={activeTab} onSelect={handleTabChange} />
     </div>

@@ -2,173 +2,153 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, toDateStr, offsetDate } from '../lib/supabase';
 import { getHabitsForDay } from '../data/habits';
 
-// NOTE: do NOT cache today's date at module load time.
-// toDateStr() is called fresh inside each function so the app
-// always uses the real current date — even after an overnight
-// PWA session without a page reload.
-
 export function useHabits() {
-  const [checks, setChecks]         = useState({});   // { habit_id: boolean }
-  const [streaks, setStreaks]        = useState({});   // { habit_id: { current, longest, lastDate } }
-  const [loading, setLoading]       = useState(true);
-  const [saving,  setSaving]        = useState(false);
-  const saveQueue = useRef({});
-  const saveTimer = useRef(null);
+  const [checks,     setChecks]     = useState({});  // { habit_id: boolean }
+  const [streaks,    setStreaks]     = useState({});  // { habit_id: { current, longest, lastDate } }
+  const [loading,    setLoading]    = useState(true);
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle'|'saving'|'saved'|'error'
+  const saveStatusTimer = useRef(null);
 
-  // ── Fetch today's checks ─────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────
+  const markSaved = () => {
+    setSaveStatus('saved');
+    clearTimeout(saveStatusTimer.current);
+    saveStatusTimer.current = setTimeout(() => setSaveStatus('idle'), 2000);
+  };
+
+  // ── Fetch today's checked habits ──────────────────────────
+  // Uses toDateStr() fresh on every call — never a module-level constant.
+  // Filters to checked=true only: absence of a row is the unchecked default.
   const fetchToday = useCallback(async () => {
-    // Compute the date fresh on every call — never rely on a
-    // stale module-level constant that could be from a prior day.
     const today = toDateStr();
     try {
       const { data, error } = await supabase
         .from('habit_checks')
-        .select('habit_id, checked')
+        .select('habit_id')
         .eq('date', today)
-        .eq('checked', true);   // only pull explicitly checked rows;
-                                // absence of a row = unchecked (clean default)
+        .eq('checked', true);
       if (error) throw error;
-      // Build a map of only the habits the user actually ticked today.
-      // Every other habit_id is simply absent → treated as false by the UI.
       const map = {};
       data.forEach(r => { map[r.habit_id] = true; });
       setChecks(map);
     } catch (e) {
-      console.warn('fetchToday failed (offline?)', e.message);
+      console.warn('fetchToday:', e.message);
     }
   }, []);
 
-  // ── Fetch streaks for all habit_ids in today's list ──────
+  // ── Fetch streaks ─────────────────────────────────────────
   const fetchStreaks = useCallback(async (sections) => {
+    const today = toDateStr();
+    const ids = sections.flatMap(s => s.items.map(i => i.id));
+    if (!ids.length) return;
     try {
-      // Collect all habit IDs for today
-      const ids = sections.flatMap(s => s.items.map(i => i.id));
-      if (!ids.length) return;
-
-      // Fetch last 90 days of checks for these habits
-      const since = offsetDate(-90);
       const { data, error } = await supabase
         .from('habit_checks')
-        .select('habit_id, date, checked')
+        .select('habit_id, date')
         .in('habit_id', ids)
-        .gte('date', since)
+        .gte('date', offsetDate(-90))
         .eq('checked', true)
         .order('date', { ascending: false });
       if (error) throw error;
 
-      // Group by habit_id → Set of date strings
-      const today = toDateStr();   // fresh — used only for streak "include today" check
+      // Group into Sets of date strings per habit
       const byId = {};
       data.forEach(r => {
-        if (!byId[r.habit_id]) byId[r.habit_id] = new Set();
-        byId[r.habit_id].add(r.date);
+        (byId[r.habit_id] ??= new Set()).add(r.date);
       });
 
       const result = {};
       ids.forEach(id => {
-        const datesSet = byId[id] ?? new Set();
-        const sorted = [...datesSet].sort().reverse(); // newest first
+        const dates = byId[id] ?? new Set();
+        const sorted = [...dates].sort(); // ascending
 
-        // Current streak: consecutive days going backwards from yesterday
+        // Current streak: consecutive days back from yesterday, +1 if today checked
         let current = 0;
-        let check = offsetDate(-1);
-        while (datesSet.has(check)) {
+        let cursor = offsetDate(-1);
+        while (dates.has(cursor)) {
           current++;
-          const d = new Date(check + 'T00:00:00');
+          const d = new Date(cursor + 'T00:00:00');
           d.setDate(d.getDate() - 1);
-          check = toDateStr(d);
+          cursor = toDateStr(d);
         }
-        // If the user has already ticked this habit today, count today too
-        if (datesSet.has(today)) current++;
+        if (dates.has(today)) current++;
 
-        // Longest streak: walk all sorted dates
+        // Longest streak: walk all dates in order
         let longest = 0, run = 0, prev = null;
-        [...datesSet].sort().forEach(dateStr => {
-          if (prev) {
-            const gap = (new Date(dateStr) - new Date(prev)) / 86400000;
-            run = gap === 1 ? run + 1 : 1;
-          } else {
-            run = 1;
-          }
+        sorted.forEach(ds => {
+          const gap = prev ? (new Date(ds) - new Date(prev)) / 86400000 : null;
+          run = gap === 1 ? run + 1 : 1;
           longest = Math.max(longest, run);
-          prev = dateStr;
+          prev = ds;
         });
+        longest = Math.max(longest, current);
 
-        result[id] = {
-          current,
-          longest: Math.max(longest, current),
-          lastDate: sorted[0] ?? null,
-        };
+        result[id] = { current, longest, lastDate: sorted[sorted.length - 1] ?? null };
       });
-
       setStreaks(result);
     } catch (e) {
-      console.warn('fetchStreaks failed', e.message);
+      console.warn('fetchStreaks:', e.message);
     }
   }, []);
 
-  // ── Debounced flush to Supabase ───────────────────────────
-  const flushSave = useCallback(async () => {
-    const queue = { ...saveQueue.current };
-    saveQueue.current = {};
-    if (!Object.keys(queue).length) return;
-
-    setSaving(true);
+  // ── Toggle: immediate save, no debounce ───────────────────
+  const toggle = useCallback(async (habit_id, label) => {
+    // Optimistic update
+    const next = !checks[habit_id];
+    setChecks(prev => ({ ...prev, [habit_id]: next }));
+    setSaveStatus('saving');
     try {
-      const today = toDateStr();   // fresh date at flush time, not at queue time
-      const rows = Object.entries(queue).map(([habit_id, { checked, label }]) => ({
-        date: today,
-        habit_id,
-        habit_label: label,
-        checked,
-      }));
-
-      // Upsert: on conflict (date, habit_id) update checked
       const { error } = await supabase
         .from('habit_checks')
-        .upsert(rows, { onConflict: 'date,habit_id', ignoreDuplicates: false });
+        .upsert(
+          { date: toDateStr(), habit_id, habit_label: label, checked: next },
+          { onConflict: 'date,habit_id' }
+        );
       if (error) throw error;
+      markSaved();
     } catch (e) {
-      console.warn('Save failed', e.message);
-    } finally {
-      setSaving(false);
+      console.warn('toggle save:', e.message);
+      setSaveStatus('error');
+      // Roll back optimistic update on failure
+      setChecks(prev => ({ ...prev, [habit_id]: !next }));
     }
-  }, []);
+  }, [checks]);
 
-  // ── Toggle a habit ────────────────────────────────────────
-  const toggle = useCallback((habit_id, label) => {
-    setChecks(prev => {
-      const next = !prev[habit_id];
-      // Queue save (debounced 500ms)
-      saveQueue.current[habit_id] = { checked: next, label };
-      clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(flushSave, 500);
-      return { ...prev, [habit_id]: next };
-    });
-  }, [flushSave]);
-
-  // ── Init ─────────────────────────────────────────────────
+  // ── Init + visibility re-fetch ────────────────────────────
   useEffect(() => {
     const day = new Date().getDay();
     const sections = getHabitsForDay(day);
 
-    const init = async () => {
-      setLoading(true);
+    const refresh = async () => {
       await fetchToday();
       await fetchStreaks(sections);
+    };
+
+    const init = async () => {
+      setLoading(true);
+      await refresh();
       setLoading(false);
     };
     init();
-    return () => clearTimeout(saveTimer.current);
+
+    // Re-fetch when user returns to the app (tab focus or visibility)
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', refresh);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', refresh);
+      clearTimeout(saveStatusTimer.current);
+    };
   }, [fetchToday, fetchStreaks]);
 
-  // ── Derived stats (always use live Date() so day is correct) ──
-  const day = new Date().getDay();
-  const sections = getHabitsForDay(day);
+  // ── Derived stats ─────────────────────────────────────────
+  const sections = getHabitsForDay(new Date().getDay());
   const allItems = sections.flatMap(s => s.items);
-  const total   = allItems.length;
-  const done    = allItems.filter(i => checks[i.id]).length;
-  const pct     = total ? Math.round((done / total) * 100) : 0;
+  const done  = allItems.filter(i => checks[i.id]).length;
+  const total = allItems.length;
+  const pct   = total ? Math.round((done / total) * 100) : 0;
 
-  return { sections, checks, streaks, loading, saving, toggle, done, total, pct, refetchStreaks: fetchStreaks };
+  return { sections, checks, streaks, loading, saveStatus, toggle, done, total, pct };
 }

@@ -7,10 +7,19 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false },
 });
 
-/** Format a Date → 'YYYY-MM-DD' */
-export const toDateStr = (d = new Date()) => d.toISOString().slice(0, 10);
+/**
+ * Format a Date → 'YYYY-MM-DD' using LOCAL time, not UTC.
+ * NEVER use .toISOString() — that returns UTC and produces the wrong
+ * date for any timezone east of UTC between midnight and the UTC offset.
+ */
+export const toDateStr = (d = new Date()) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
 
-/** Offset today by N days → 'YYYY-MM-DD' */
+/** Offset today by N days → 'YYYY-MM-DD' (local time) */
 export const offsetDate = (n) => {
   const d = new Date();
   d.setDate(d.getDate() + n);

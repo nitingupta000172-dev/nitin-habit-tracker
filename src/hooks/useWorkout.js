@@ -2,193 +2,224 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, toDateStr, offsetDate } from '../lib/supabase';
 import { SESSION_BY_DAY, WORKOUTS, parseMaxReps } from '../data/workouts';
 
-const TODAY = toDateStr();
-
 export function useWorkout() {
   const day         = new Date().getDay();
   const sessionType = SESSION_BY_DAY[day];
   const session     = WORKOUTS[sessionType] ?? null;
 
-  // sets: { [exercise_id]: { [set_index]: { weight, reps } } }
-  const [todaySets,   setTodaySets]   = useState({});
-  const [lastSession, setLastSession] = useState({}); // same shape but from last session
-  const [lastDate,    setLastDate]    = useState(null);
-  const [overload,    setOverload]    = useState({}); // { exercise_id: boolean }
-  const [loading,     setLoading]     = useState(true);
-  const [gifCache,    setGifCache]    = useState({});
+  // todaySets: { [exerciseName]: { [setIndex]: { weight, reps } } }
+  const [todaySets,    setTodaySets]    = useState({});
+  const [lastSession,  setLastSession]  = useState({});
+  const [lastDate,     setLastDate]     = useState(null);
+  const [overload,     setOverload]     = useState({});
+  const [loading,      setLoading]      = useState(true);
+  const [saveStatus,   setSaveStatus]   = useState('idle');
+  const [gifCache,     setGifCache]     = useState({});
 
-  const saveQueue = useRef({});
-  const saveTimer = useRef(null);
+  // Ref mirrors todaySets so flush callback always reads current values
+  // without needing todaySets as a closure dependency.
+  const todaySetsRef   = useRef({});
+  const saveQueue      = useRef({});   // { 'ExName::idx': { exerciseName, setIndex } }
+  const saveTimer      = useRef(null);
+  const saveStatusTimer= useRef(null);
+
+  const syncRef = (next) => { todaySetsRef.current = next; return next; };
+
+  const markSaved = () => {
+    setSaveStatus('saved');
+    clearTimeout(saveStatusTimer.current);
+    saveStatusTimer.current = setTimeout(() => setSaveStatus('idle'), 1500);
+  };
 
   // ── Fetch today's logged sets ─────────────────────────────
   const fetchToday = useCallback(async () => {
     if (!session) return;
+    const today = toDateStr(); // always fresh local date
     try {
       const { data, error } = await supabase
         .from('workout_sets')
         .select('exercise_name, set_index, weight, reps')
-        .eq('date', TODAY)
+        .eq('date', today)
         .eq('session_type', sessionType);
       if (error) throw error;
-
       const map = {};
       data.forEach(r => {
-        if (!map[r.exercise_name]) map[r.exercise_name] = {};
-        map[r.exercise_name][r.set_index] = { weight: r.weight ?? '', reps: r.reps ?? '' };
+        (map[r.exercise_name] ??= {})[r.set_index] = {
+          weight: r.weight ?? '',
+          reps:   r.reps   ?? '',
+        };
       });
-      setTodaySets(map);
-    } catch (e) { console.warn('fetchToday workout', e.message); }
+      setTodaySets(syncRef(map));
+    } catch (e) { console.warn('fetchToday workout:', e.message); }
   }, [session, sessionType]);
 
-  // ── Fetch last two sessions for pre-fill + overload ───────
+  // ── Fetch last sessions for pre-fill + overload detection ─
   const fetchLastSessions = useCallback(async () => {
     if (!session) return;
+    const today = toDateStr();
     try {
-      // Get the 2 most recent distinct dates (excluding today) for this session type
       const { data: dateRows, error: de } = await supabase
         .from('workout_sets')
         .select('date')
         .eq('session_type', sessionType)
-        .neq('date', TODAY)
+        .neq('date', today)
         .order('date', { ascending: false });
       if (de) throw de;
 
       const uniqueDates = [...new Set(dateRows.map(r => r.date))].slice(0, 2);
       if (!uniqueDates.length) return;
 
-      const lastD = uniqueDates[0];
-      setLastDate(lastD);
+      setLastDate(uniqueDates[0]);
 
-      // Fetch sets for last date (pre-fill)
-      const { data: lastSetsData, error: lse } = await supabase
+      // Pre-fill data from last session
+      const { data: lastData, error: le } = await supabase
         .from('workout_sets')
         .select('exercise_name, set_index, weight, reps')
-        .eq('date', lastD)
+        .eq('date', uniqueDates[0])
         .eq('session_type', sessionType);
-      if (lse) throw lse;
+      if (le) throw le;
 
       const lastMap = {};
-      lastSetsData.forEach(r => {
-        if (!lastMap[r.exercise_name]) lastMap[r.exercise_name] = {};
-        lastMap[r.exercise_name][r.set_index] = { weight: r.weight ?? '', reps: r.reps ?? '' };
+      lastData.forEach(r => {
+        (lastMap[r.exercise_name] ??= {})[r.set_index] = {
+          weight: r.weight ?? '',
+          reps:   r.reps   ?? '',
+        };
       });
       setLastSession(lastMap);
 
-      // Overload check: were all sets at max reps in BOTH last 2 sessions?
+      // Progressive overload: were all sets at max reps in BOTH last 2 sessions?
       if (uniqueDates.length < 2) return;
       const { data: prevSets } = await supabase
         .from('workout_sets')
-        .select('exercise_name, reps')
+        .select('date, exercise_name, reps')
         .in('date', uniqueDates)
         .eq('session_type', sessionType);
 
       const overloadMap = {};
       session.exercises.forEach(ex => {
-        const maxReps = parseMaxReps(ex.reps);
+        const maxReps  = parseMaxReps(ex.reps);
         const relevant = (prevSets ?? []).filter(r => r.exercise_name === ex.name);
         if (!relevant.length) return;
-        // Group by date
         const byDate = {};
-        relevant.forEach(r => {
-          const d = dateRows.find(dr => dr.date === r.date)?.date ?? 'unknown';
-          if (!byDate[d]) byDate[d] = [];
-          byDate[d].push(r.reps);
-        });
-        // Overload if in each date all reps >= maxReps
-        const allDatesHit = Object.values(byDate).every(
-          repsArr => repsArr.length > 0 && repsArr.every(rep => rep >= maxReps)
+        relevant.forEach(r => { (byDate[r.date] ??= []).push(r.reps); });
+        const allHit = Object.values(byDate).every(
+          arr => arr.length > 0 && arr.every(rep => rep >= maxReps)
         );
-        if (allDatesHit && Object.keys(byDate).length >= 2) overloadMap[ex.id] = true;
+        if (allHit && Object.keys(byDate).length >= 2) overloadMap[ex.id] = true;
       });
       setOverload(overloadMap);
-
-    } catch (e) { console.warn('fetchLastSessions', e.message); }
+    } catch (e) { console.warn('fetchLastSessions:', e.message); }
   }, [session, sessionType]);
 
-  // ── Update a set field ────────────────────────────────────
-  const updateSet = useCallback((exerciseName, exerciseId, setIndex, field, value) => {
+  // ── Flush queued saves to Supabase (200ms debounce) ───────
+  // Reads from todaySetsRef so it always has the latest values
+  // with no stale closure dependency on todaySets state.
+  const flushSets = useCallback(async () => {
+    const queue = { ...saveQueue.current };
+    saveQueue.current = {};
+    if (!Object.keys(queue).length) return;
+
+    const today   = toDateStr();
+    const current = todaySetsRef.current;
+    setSaveStatus('saving');
+    try {
+      await Promise.all(
+        Object.values(queue).map(({ exerciseName, setIndex }) => {
+          const vals = current[exerciseName]?.[setIndex] ?? {};
+          return supabase.from('workout_sets').upsert(
+            {
+              date:          today,
+              session_type:  sessionType,
+              exercise_name: exerciseName,
+              set_index:     setIndex,
+              weight:        parseFloat(vals.weight) || null,
+              reps:          parseInt(vals.reps)     || null,
+            },
+            { onConflict: 'date,session_type,exercise_name,set_index' }
+          );
+        })
+      );
+      markSaved();
+    } catch (e) {
+      console.warn('flushSets:', e.message);
+      setSaveStatus('error');
+    }
+  }, [sessionType]);
+
+  // ── Update a set field (called on each keystroke) ─────────
+  const updateSet = useCallback((exerciseName, _exerciseId, setIndex, field, value) => {
+    // Merge into state AND ref atomically via the state updater
     setTodaySets(prev => {
-      const next = { ...prev };
-      if (!next[exerciseName]) next[exerciseName] = {};
-      next[exerciseName][setIndex] = { ...(next[exerciseName][setIndex] ?? {}), [field]: value };
+      const next = {
+        ...prev,
+        [exerciseName]: {
+          ...(prev[exerciseName] ?? {}),
+          [setIndex]: { ...(prev[exerciseName]?.[setIndex] ?? {}), [field]: value },
+        },
+      };
+      todaySetsRef.current = next; // keep ref in sync
+
+      // Queue this set for flush — store key only; flush reads from ref
+      saveQueue.current[`${exerciseName}::${setIndex}`] = { exerciseName, setIndex };
       return next;
     });
 
-    // Queue debounced save
-    const key = `${exerciseName}__${setIndex}`;
-    if (!saveQueue.current[key]) saveQueue.current[key] = {};
-    saveQueue.current[key][field]    = value;
-    saveQueue.current[key]._name     = exerciseName;
-    saveQueue.current[key]._setIndex = setIndex;
-
+    // Debounce at 200ms — tight enough to feel instant, avoids per-keystroke writes
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const queue = { ...saveQueue.current };
-      saveQueue.current = {};
-      Object.values(queue).forEach(async (item) => {
-        const { _name, _setIndex, weight, reps } = item;
-        try {
-          // Load existing set values to merge
-          const existing = todaySets[_name]?.[_setIndex] ?? {};
-          const merged   = { ...existing, [field]: value };
-          await supabase.from('workout_sets').upsert({
-            date:          TODAY,
-            session_type:  sessionType,
-            exercise_name: _name,
-            set_index:     _setIndex,
-            weight:        parseFloat(weight ?? merged.weight) || null,
-            reps:          parseInt(reps ?? merged.reps)       || null,
-          }, { onConflict: 'date,session_type,exercise_name,set_index' });
-        } catch (e) { console.warn('set save', e.message); }
-      });
-    }, 500);
-  }, [todaySets, sessionType]);
+    saveTimer.current = setTimeout(flushSets, 200);
+  }, [flushSets]);
 
-  // ── Fetch exercise GIF from wger.de ───────────────────────
+  // ── Exercise GIF fetch (wger.de, cached in state) ─────────
   const fetchGif = useCallback(async (exerciseName) => {
     if (gifCache[exerciseName] !== undefined) return;
-    setGifCache(p => ({ ...p, [exerciseName]: null })); // mark loading
+    setGifCache(p => ({ ...p, [exerciseName]: null }));
     try {
       const term = exerciseName.replace(/[^a-zA-Z ]/g, '').trim();
-      const res = await fetch(
+      const res  = await fetch(
         `https://wger.de/api/v2/exercise/search/?term=${encodeURIComponent(term)}&language=english&format=json`,
         { signal: AbortSignal.timeout(5000) }
       );
-      const data = await res.json();
+      const data   = await res.json();
       const baseId = data.suggestions?.[0]?.data?.base_id;
       if (!baseId) return;
-
-      const imgRes = await fetch(
+      const imgRes  = await fetch(
         `https://wger.de/api/v2/exerciseimage/?exercise_base=${baseId}&format=json`,
         { signal: AbortSignal.timeout(5000) }
       );
       const imgData = await imgRes.json();
       const url = imgData.results?.find(r => r.is_main)?.image ?? imgData.results?.[0]?.image;
       if (url) setGifCache(p => ({ ...p, [exerciseName]: url }));
-    } catch (_) { /* silently fall through to SVG fallback */ }
+    } catch (_) { /* SVG fallback shown automatically */ }
   }, [gifCache]);
 
-  // ── Init ─────────────────────────────────────────────────
+  // ── Init + visibility re-fetch ────────────────────────────
   useEffect(() => {
+    const refresh = () => Promise.all([fetchToday(), fetchLastSessions()]);
+
     const init = async () => {
       setLoading(true);
-      await Promise.all([fetchToday(), fetchLastSessions()]);
+      await refresh();
       setLoading(false);
     };
     init();
-    return () => clearTimeout(saveTimer.current);
+
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', refresh);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', refresh);
+      clearTimeout(saveTimer.current);
+      clearTimeout(saveStatusTimer.current);
+    };
   }, [fetchToday, fetchLastSessions]);
 
   return {
-    sessionType,
-    session,
-    todaySets,
-    lastSession,
-    lastDate,
-    overload,
-    loading,
-    gifCache,
-    fetchGif,
-    updateSet,
+    sessionType, session,
+    todaySets, lastSession, lastDate,
+    overload, loading, saveStatus,
+    gifCache, fetchGif, updateSet,
   };
 }
