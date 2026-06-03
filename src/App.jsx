@@ -28,14 +28,14 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <div className="flex flex-col min-h-dvh max-w-lg mx-auto bg-bg relative">
-        <main className="flex-1 relative overflow-hidden">
+      <div className="flex flex-col h-full max-w-lg mx-auto bg-bg relative">
+        <main className="flex-1 min-h-0 relative overflow-hidden">
           {TABS.map(({ id, Component }) => (
             // display:none keeps the component mounted (state preserved)
             // but removes it from layout and interaction when not active.
             <div
               key={id}
-              className="absolute inset-0 flex flex-col overflow-y-auto scrollbar-hide"
+              className="h-full flex flex-col overflow-y-auto scrollbar-hide"
               style={{ display: activeTab === id ? 'flex' : 'none' }}
             >
               <Component />

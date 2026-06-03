@@ -14,7 +14,8 @@
     -moz-osx-font-smoothing: grayscale;
     overscroll-behavior: none;
   }
-  #root { min-height: 100dvh; display: flex; flex-direction: column; }
+  html, body { height: 100%; }
+  #root { height: 100%; display: flex; flex-direction: column; }
   input[type='number']::-webkit-inner-spin-button,
   input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   input[type='number'] { -moz-appearance: textfield; }
