@@ -9,7 +9,7 @@ const CustomTooltip = ({ active, payload, label }) => {
   return (
     <div className="bg-bg-elevated border border-bg-border rounded-xl px-3 py-2 shadow-xl text-xs">
       <p className="text-text-muted mb-1">{label}</p>
-      <p className="font-bold text-accent">{payload[0].value} kg</p>
+      <p className="font-bold text-accent">{payload[0].value} lbs</p>
     </div>
   );
 };
@@ -61,7 +61,7 @@ export default function ExerciseChart({ exerciseNames, data, selected, onSelect 
                 <Tooltip content={<CustomTooltip />} />
                 {maxWeight > 0 && (
                   <ReferenceLine y={maxWeight} stroke="#f59e0b" strokeDasharray="4 4"
-                    label={{ value: `PB ${maxWeight}kg`, fill: '#f59e0b', fontSize: 10, position: 'right' }}
+                    label={{ value: `PB ${maxWeight} lbs`, fill: '#f59e0b', fontSize: 10, position: 'right' }}
                   />
                 )}
                 <Line

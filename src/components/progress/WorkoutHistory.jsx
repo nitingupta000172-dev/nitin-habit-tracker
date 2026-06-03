@@ -33,7 +33,7 @@ export default function WorkoutHistory({ sessions }) {
                     <span className="text-[11px] text-text-muted">{s.exercises.length} exercises</span>
                     <span className="text-[11px] text-text-muted">{s.sets} sets</span>
                     {s.volume > 0 && (
-                      <span className="text-[11px] text-accent">{s.volume.toLocaleString()} kg vol</span>
+                      <span className="text-[11px] text-accent">{s.volume.toLocaleString()} lbs vol</span>
                     )}
                   </div>
                 </div>
