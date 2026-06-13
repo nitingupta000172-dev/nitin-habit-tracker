@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, toDateStr, offsetDate } from '../lib/supabase';
 import { SESSION_BY_DAY } from '../data/workouts';
-
-const TODAY = toDateStr();
+import { getHabitsForDay } from '../data/habits';
 
 export function useProgress() {
   const [habitStats,    setHabitStats]    = useState(null);
@@ -17,23 +16,31 @@ export function useProgress() {
 
   // ── Today stats ───────────────────────────────────────────
   const fetchTodayStats = useCallback(async () => {
+    const today = toDateStr();
+    const day   = new Date().getDay();
+    const sections = getHabitsForDay(day);
+    const allIds = sections.flatMap(s => s.items.map(i => i.id));
+    const total = allIds.length;
+
     const { data } = await supabase
       .from('habit_checks')
-      .select('habit_id, checked')
-      .eq('date', TODAY);
-    const done  = (data ?? []).filter(r => r.checked).length;
-    const total = (data ?? []).length;
+      .select('habit_id')
+      .eq('date', today)
+      .eq('checked', true);
+    const done = (data ?? []).filter(r => allIds.includes(r.habit_id)).length;
+
     const { data: sets } = await supabase
       .from('workout_sets')
       .select('exercise_name')
-      .eq('date', TODAY);
+      .eq('date', today);
     const uniqueEx = new Set((sets ?? []).map(r => r.exercise_name)).size;
     setHabitStats({ done, total, pct: total ? Math.round((done/total)*100) : 0, exercises: uniqueEx,
-                    session: SESSION_BY_DAY[new Date().getDay()] });
+                    session: SESSION_BY_DAY[day] });
   }, []);
 
   // ── Streak table ──────────────────────────────────────────
   const fetchStreaks = useCallback(async () => {
+    const today = toDateStr();
     const since = offsetDate(-365);
     const { data } = await supabase
       .from('habit_checks')
@@ -53,7 +60,7 @@ export function useProgress() {
 
     const table = [];
     const earliest = data[0]?.date;
-    const daysSince = earliest ? Math.max(1, Math.ceil((new Date(TODAY) - new Date(earliest)) / 86400000) + 1) : 1;
+    const daysSince = earliest ? Math.max(1, Math.ceil((new Date(today) - new Date(earliest)) / 86400000) + 1) : 1;
 
     Object.entries(map).forEach(([id, { label, dates, checked }]) => {
       const checkedSet = new Set(dates.filter((_, i) => checked[i]));
@@ -66,7 +73,7 @@ export function useProgress() {
         current++;
         const dt = new Date(d + 'T00:00:00'); dt.setDate(dt.getDate() - 1); d = toDateStr(dt);
       }
-      if (checkedSet.has(TODAY)) current++;
+      if (checkedSet.has(today)) current++;
 
       // Longest streak
       let longest = 0, run = 0, prev = null;
