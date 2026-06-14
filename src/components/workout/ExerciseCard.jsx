@@ -1,14 +1,32 @@
-import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock, ChevronDown } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertTriangle, Check, CheckCircle2, Clock, ChevronDown } from 'lucide-react';
 import MuscleSVG from './MuscleSVG';
+
+function playDoubleBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const beep = (at) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.3, at);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + 0.25);
+      osc.start(at);
+      osc.stop(at + 0.25);
+    };
+    beep(ctx.currentTime);
+    beep(ctx.currentTime + 0.35);
+  } catch (_) {}
+}
 
 export default function ExerciseCard({
   exercise, todaySets, lastSets, lastDate, overload,
-  onUpdateSet, fetchGif, gifCache, onSetComplete,
+  onUpdateSet, fetchGif, gifCache,
 }) {
-  // Start expanded so exercises are never hidden after completion
-  const [expanded,  setExpanded]  = useState(false);
-  const [gifError,  setGifError]  = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [gifError, setGifError] = useState(false);
 
   const gifUrl = gifCache[exercise.name];
 
@@ -16,15 +34,12 @@ export default function ExerciseCard({
     if (expanded && gifUrl === undefined) fetchGif(exercise.name);
   }, [expanded, exercise.name, gifUrl, fetchGif]);
 
-  // Count how many sets have BOTH weight AND reps filled
   const totalSets  = exercise.sets;
   const loggedSets = Array.from({ length: totalSets }, (_, i) => todaySets?.[i] ?? {})
     .filter(s => s.weight && s.reps).length;
   const allComplete = loggedSets === totalSets;
 
   const todaySetsArr = Object.entries(todaySets ?? {})
-    .sort((a, b) => Number(a[0]) - Number(b[0]));
-  const lastSetsArr  = Object.entries(lastSets  ?? {})
     .sort((a, b) => Number(a[0]) - Number(b[0]));
 
   return (
@@ -38,7 +53,6 @@ export default function ExerciseCard({
         onClick={() => setExpanded(e => !e)}
         className="w-full flex items-center gap-3 p-4 text-left"
       >
-        {/* Thumbnail */}
         <div className="w-[52px] h-[52px] rounded-xl overflow-hidden flex-shrink-0 bg-bg-elevated">
           {gifUrl && !gifError ? (
             <img
@@ -51,7 +65,6 @@ export default function ExerciseCard({
           )}
         </div>
 
-        {/* Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-2 flex-wrap">
             <p className="text-[14px] font-semibold text-text-primary leading-tight">
@@ -77,7 +90,6 @@ export default function ExerciseCard({
             <span className="text-xs text-text-muted">{exercise.sets} × {exercise.reps}</span>
           </div>
 
-          {/* Completion status — always visible */}
           {allComplete ? (
             <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold text-success">
               <CheckCircle2 size={12} strokeWidth={2.5} />
@@ -90,7 +102,6 @@ export default function ExerciseCard({
           ) : null}
         </div>
 
-        {/* Right badges + chevron */}
         <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
           {overload && (
             <span className="flex items-center gap-1 badge bg-danger/15 text-danger text-[9px] font-bold">
@@ -108,80 +119,76 @@ export default function ExerciseCard({
         </div>
       </button>
 
-      {/* ── Expanded body — always shows when expanded; completed exercises
-           stay visible and expanded so user can review their work ──── */}
+      {/* ── Expanded body ─────────────────────────────────── */}
       {expanded && (
         <div className="px-4 pb-4 space-y-4 border-t border-bg-border pt-4 animate-fade-in">
-          {/* Notes */}
           {exercise.notes && (
             <p className="text-xs text-text-secondary bg-bg-elevated rounded-xl px-3 py-2">
               💡 {exercise.notes}
             </p>
           )}
 
-          {/* GIF larger */}
           {gifUrl && !gifError && (
             <div className="rounded-xl overflow-hidden w-full h-40 bg-bg-elevated">
               <img src={gifUrl} alt={exercise.name} className="w-full h-full object-contain" />
             </div>
           )}
 
-          {/* Last session */}
-          {lastDate && lastSetsArr.length > 0 && (
+          {lastDate && Object.keys(lastSets ?? {}).length > 0 && (
             <div className="bg-bg-elevated rounded-xl px-3 py-2.5">
-              <div className="flex items-center gap-1.5 mb-2">
+              <div className="flex items-center gap-1.5 mb-1.5">
                 <Clock size={12} className="text-text-muted" />
-                <span className="text-[11px] text-text-muted">Last session: {lastDate}</span>
+                <span className="text-[11px] text-text-muted">Last: {lastDate}</span>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {lastSetsArr.map(([idx, val]) => (
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(lastSets).sort((a, b) => +a[0] - +b[0]).map(([idx, val]) => (
                   <span key={idx} className="badge bg-bg-card text-text-secondary text-[11px]">
-                    Set {+idx + 1}: {val.weight ?? '—'} lbs × {val.reps ?? '—'}
+                    {+idx + 1}: {val.weight ?? '—'} lbs × {val.reps ?? '—'}
                   </span>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Set logger */}
-          <div className="space-y-2">
-            <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-              Log sets
-            </p>
-            {Array.from({ length: totalSets }, (_, i) => {
-              const curr = todaySets?.[i] ?? {};
-              const last = lastSets?.[i]  ?? {};
-              return (
-                <SetRow
-                  key={i}
-                  setIndex={i}
-                  exercise={exercise}
-                  current={curr}
-                  lastValues={last}
-                  onUpdate={(field, val) => {
-                    onUpdateSet(exercise.name, exercise.id, i, field, val);
-                    // Trigger rest timer when this set becomes complete
-                    const after = { ...curr, [field]: val };
-                    if (after.weight && after.reps) onSetComplete?.();
-                  }}
-                />
-              );
-            })}
+          {/* ── Set logger ────────────────────────────────── */}
+          <div>
+            {/* Column headers */}
+            <div className="flex items-center gap-2 px-2 mb-1">
+              <span className="w-6 flex-shrink-0" />
+              <span className="w-[52px] flex-shrink-0 text-[10px] text-text-muted">Prev</span>
+              <span className="flex-1 text-[10px] text-text-muted text-center">Weight</span>
+              <span className="w-3 flex-shrink-0" />
+              <span className="flex-1 text-[10px] text-text-muted text-center">Reps</span>
+              <span className="w-8 flex-shrink-0" />
+            </div>
+
+            <div className="space-y-1">
+              {Array.from({ length: totalSets }, (_, i) => {
+                const curr = todaySets?.[i] ?? {};
+                const last = lastSets?.[i]  ?? {};
+                return (
+                  <SetRow
+                    key={i}
+                    setIndex={i}
+                    exercise={exercise}
+                    current={curr}
+                    lastValues={last}
+                    onUpdate={(field, val) =>
+                      onUpdateSet(exercise.name, exercise.id, i, field, val)
+                    }
+                  />
+                );
+              })}
+            </div>
           </div>
 
-          {/* Completed summary banner */}
           {allComplete && (
             <div className="flex items-center gap-3 bg-success/10 border border-success/30 rounded-2xl px-4 py-3">
               <CheckCircle2 size={20} className="text-success flex-shrink-0" strokeWidth={2} />
               <div>
-                <p className="text-sm font-bold text-success">
-                  {exercise.name} complete!
-                </p>
+                <p className="text-sm font-bold text-success">{exercise.name} complete!</p>
                 <p className="text-xs text-text-secondary mt-0.5">
-                  {totalSets} sets · {
-                    todaySetsArr.map(([, v]) =>
-                      `${v.weight}×${v.reps}`).join(', ')
-                  }
+                  {totalSets} sets · {todaySetsArr.map(([, v]) => `${v.weight}×${v.reps}`).join(', ')}
                 </p>
               </div>
             </div>
@@ -193,21 +200,55 @@ export default function ExerciseCard({
 }
 
 function SetRow({ setIndex, exercise, current, lastValues, onUpdate }) {
-  const isComplete = current.weight && current.reps;
-  return (
-    <div
-      className={`flex items-center gap-2 rounded-xl p-2 transition-colors
-                  ${isComplete ? 'bg-success/8' : 'bg-transparent'}`}
-    >
-      <span className="text-[11px] font-bold text-text-muted w-12 flex-shrink-0">
-        Set {setIndex + 1}
-        {isComplete && (
-          <CheckCircle2 size={10} className="text-success inline ml-1" strokeWidth={2.5} />
-        )}
-      </span>
+  const [ticked, setTicked] = useState(false);
+  const [secs,   setSecs]   = useState(null); // null = no active timer
 
-      <div className="flex-1 flex items-center gap-2">
-        {/* Weight in lbs */}
+  // Countdown: tick every second; beep + auto-dismiss at 0
+  useEffect(() => {
+    if (secs === null) return;
+    if (secs <= 0) {
+      playDoubleBeep();
+      const id = setTimeout(() => setSecs(null), 400);
+      return () => clearTimeout(id);
+    }
+    const id = setTimeout(() => setSecs(s => (s !== null && s > 0 ? s - 1 : 0)), 1000);
+    return () => clearTimeout(id);
+  }, [secs]);
+
+  const handleTick = () => {
+    if (ticked) {
+      setTicked(false);
+      setSecs(null);
+    } else {
+      setTicked(true);
+      setSecs(120);
+    }
+  };
+
+  const prevLabel = (lastValues.weight && lastValues.reps)
+    ? `${lastValues.weight}×${lastValues.reps}`
+    : '—';
+
+  const pct    = secs !== null ? Math.max(0, (secs / 120) * 100) : 0;
+  const mins   = Math.floor((secs ?? 0) / 60);
+  const secsStr = ((secs ?? 0) % 60).toString().padStart(2, '0');
+
+  return (
+    <div>
+      {/* Row: [#] [prev] [weight] [×] [reps] [tick] */}
+      <div className={`flex items-center gap-2 rounded-xl px-2 py-1.5 transition-colors
+                       ${ticked ? 'bg-success/8' : 'bg-transparent'}`}>
+        {/* Set number */}
+        <span className="text-[11px] font-bold text-text-muted w-6 flex-shrink-0 text-center">
+          {setIndex + 1}
+        </span>
+
+        {/* Previous weight × reps — greyed out */}
+        <span className="text-[11px] text-text-muted w-[52px] flex-shrink-0 tabular-nums truncate">
+          {prevLabel}
+        </span>
+
+        {/* Weight input */}
         <div className="flex-1">
           <div className="relative">
             <input
@@ -216,17 +257,17 @@ function SetRow({ setIndex, exercise, current, lastValues, onUpdate }) {
               placeholder={lastValues.weight ? String(lastValues.weight) : 'lbs'}
               value={current.weight ?? ''}
               onChange={e => onUpdate('weight', e.target.value)}
-              className="input-field text-center pr-8"
+              className="input-field text-center pr-7 py-1.5 text-sm"
             />
-            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-text-muted pointer-events-none">
-              lbs
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-text-muted pointer-events-none">
+              lb
             </span>
           </div>
         </div>
 
-        <span className="text-text-muted text-sm flex-shrink-0">×</span>
+        <span className="text-text-muted text-xs flex-shrink-0 w-3 text-center">×</span>
 
-        {/* Reps */}
+        {/* Reps input */}
         <div className="flex-1">
           <input
             type="number"
@@ -234,15 +275,48 @@ function SetRow({ setIndex, exercise, current, lastValues, onUpdate }) {
             placeholder={lastValues.reps ? String(lastValues.reps) : exercise.reps.split('–')[0]}
             value={current.reps ?? ''}
             onChange={e => onUpdate('reps', e.target.value)}
-            className="input-field text-center"
+            className="input-field text-center py-1.5 text-sm"
           />
         </div>
+
+        {/* Tick button */}
+        <button
+          onClick={handleTick}
+          aria-label={ticked ? 'Unmark set done' : 'Mark set done'}
+          className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center
+                      border-2 transition-all duration-200
+                      ${ticked
+                        ? 'bg-success border-success shadow-[0_0_8px_rgba(34,197,94,0.35)]'
+                        : 'border-bg-border hover:border-success/60 bg-transparent'}`}
+        >
+          <Check
+            size={13}
+            strokeWidth={3}
+            className={ticked ? 'text-white' : 'text-transparent'}
+          />
+        </button>
       </div>
 
-      {/* Volume */}
-      <span className="text-[10px] text-text-muted w-10 text-right flex-shrink-0 tabular-nums">
-        {isComplete ? `${Math.round(current.weight * current.reps)}` : ''}
-      </span>
+      {/* Inline blue countdown bar — tap to dismiss early */}
+      {secs !== null && (
+        <button
+          onClick={() => setSecs(null)}
+          className="w-full h-7 rounded-lg overflow-hidden relative mt-0.5 mb-1
+                     bg-blue-950/60 border border-blue-500/20 block"
+          aria-label="Dismiss rest timer"
+        >
+          {/* Shrinking fill bar */}
+          <div
+            className="absolute inset-y-0 left-0 bg-blue-600/75 rounded-lg"
+            style={{ width: `${pct}%`, transition: 'width 1s linear' }}
+          />
+          {/* Time label */}
+          <span className="absolute inset-0 flex items-center justify-center
+                           text-xs font-bold text-white tabular-nums z-10 drop-shadow">
+            {mins}:{secsStr}
+          </span>
+        </button>
+      )}
     </div>
   );
 }

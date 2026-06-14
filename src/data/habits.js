@@ -2,9 +2,9 @@
 export const DAY_NAMES   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 export const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-const LLLT_DAYS    = [1, 2, 4];       // Mon Tue Thu
+const LLLT_DAYS    = [1, 3, 5];       // Mon Wed Fri
 const GYM_DAYS     = [1, 2, 4, 5, 6]; // Mon Tue Thu Fri Sat
-const NO_LLLT_DAYS = [0, 3, 5, 6];    // Sun Wed Fri Sat
+const NO_LLLT_DAYS = [0, 2, 4, 6];    // Sun Tue Thu Sat
 
 const PM_ACTIVE = {
   0: 'Pyunkang Yul only',
@@ -16,45 +16,43 @@ const PM_ACTIVE = {
   6: 'Retinoid',
 };
 
+// Hair routine per the corrected weekly schedule:
+//   Mon/Wed/Fri  — LLLT ON · scalp oil pre-wash · shampoo (Nizoral Mon+Wed, CeraVe Fri)
+//   Tue/Thu      — No LLLT · rinse only · no pre-oil
+//   Sat          — No LLLT · rinse only · Dermaroll → wait 2 h → Minoxidil
+//   Sun          — No LLLT · rinse only · full rest · refill oils if needed
 const HAIR_BY_DAY = {
-  0: [ // Sunday
-    { id: 'hair_rinse',       label: 'Rinse only' },
-    { id: 'hair_scalp',       label: 'Scalp mix (4–5 drops)' },
-    { id: 'hair_beard',       label: 'Beard mix (3–5 drops)' },
-    { id: 'hair_refill',      label: 'Refill oil bottles' },
+  0: [ // Sunday — rinse only, full rest, refill oils if needed
+    { id: 'hair_rinse',  label: 'Rinse only' },
+    { id: 'hair_refill', label: 'Refill oil bottles if needed' },
   ],
-  1: [ // Monday
-    { id: 'hair_nizoral_mon', label: 'Nizoral 2% — 5 min then rinse' },
-    { id: 'hair_scalp',       label: 'Scalp mix (4–5 drops)' },
-    { id: 'hair_beard',       label: 'Beard mix (3–5 drops)' },
+  1: [ // Monday — LLLT ON · Nizoral wash · scalp oil pre-wash
+    { id: 'hair_scalp_prewash', label: 'Scalp oil pre-wash (apply before shower)' },
+    { id: 'hair_nizoral_mon',   label: 'Nizoral 2% — 5 min then rinse' },
+    { id: 'hair_beard',         label: 'Beard mix (3–5 drops)' },
   ],
-  2: [ // Tuesday
-    { id: 'hair_rinse',       label: 'Rinse only' },
-    { id: 'hair_scalp',       label: 'Scalp mix (4–5 drops)' },
-    { id: 'hair_beard',       label: 'Beard mix (3–5 drops)' },
+  2: [ // Tuesday — no LLLT · rinse only · no pre-oil
+    { id: 'hair_rinse', label: 'Rinse only' },
+    { id: 'hair_beard', label: 'Beard mix (3–5 drops)' },
   ],
-  3: [ // Wednesday
-    { id: 'hair_scalp_pregym', label: 'Apply scalp mix pre-gym' },
-    { id: 'hair_nizoral_wed',  label: 'Nizoral 2% post-shower' },
-    { id: 'hair_scalp',        label: 'Scalp mix (4–5 drops)' },
-    { id: 'hair_beard',        label: 'Beard mix (3–5 drops)' },
+  3: [ // Wednesday — LLLT ON · Nizoral wash · scalp oil pre-wash
+    { id: 'hair_scalp_prewash', label: 'Scalp oil pre-wash (apply before shower)' },
+    { id: 'hair_nizoral_wed',   label: 'Nizoral 2% — 5 min then rinse' },
+    { id: 'hair_beard',         label: 'Beard mix (3–5 drops)' },
   ],
-  4: [ // Thursday
-    { id: 'hair_rinse',       label: 'Rinse only' },
-    { id: 'hair_scalp',       label: 'Scalp mix (4–5 drops)' },
-    { id: 'hair_beard',       label: 'Beard mix (3–5 drops)' },
+  4: [ // Thursday — no LLLT · rinse only · no pre-oil
+    { id: 'hair_rinse', label: 'Rinse only' },
+    { id: 'hair_beard', label: 'Beard mix (3–5 drops)' },
   ],
-  5: [ // Friday
-    { id: 'hair_cerave',      label: 'CeraVe Anti-Dandruff wash' },
-    { id: 'hair_scalp',       label: 'Scalp mix (4–5 drops)' },
-    { id: 'hair_beard',       label: 'Beard mix (3–5 drops)' },
+  5: [ // Friday — LLLT ON · CeraVe wash · scalp oil pre-wash
+    { id: 'hair_scalp_prewash', label: 'Scalp oil pre-wash (apply before shower)' },
+    { id: 'hair_cerave',        label: 'CeraVe Anti-Dandruff wash' },
+    { id: 'hair_beard',         label: 'Beard mix (3–5 drops)' },
   ],
-  6: [ // Saturday
-    { id: 'hair_dermaroll',   label: 'Dermaroll hairline 0.5mm (4–5 passes)' },
-    { id: 'hair_scalp_sat',   label: 'Scalp mix to rest of scalp' },
-    { id: 'hair_rinse_sat',   label: 'Rinse only post-shower' },
-    { id: 'hair_minoxidil',   label: 'Kirkland Minoxidil 5% foam to hairline (wait 2 h first)' },
-    { id: 'hair_beard',       label: 'Beard mix (3–5 drops)' },
+  6: [ // Saturday — no LLLT · rinse only · Dermaroll → wait 2 h → Minoxidil
+    { id: 'hair_rinse_sat',  label: 'Rinse only' },
+    { id: 'hair_dermaroll',  label: 'Dermaroll hairline 0.5mm (4–5 passes)' },
+    { id: 'hair_minoxidil',  label: 'Minoxidil 5% foam to hairline (wait 2 h after Dermaroll)' },
   ],
 };
 
@@ -71,11 +69,11 @@ export const getHabitsForDay = (day) => {
     { id: 'morning_meditation', label: 'Meditation', subtitle: '5:00–5:30 AM' },
   ];
   if (LLLT_DAYS.includes(day))
-    morning.push({ id: 'morning_lllt',  label: 'LLLT 30 min during getting ready', badge: 'Mon · Tue · Thu' });
+    morning.push({ id: 'morning_lllt',  label: 'LLLT 30 min during getting ready', badge: 'Mon · Wed · Fri' });
   if (GYM_DAYS.includes(day))
     morning.push({ id: 'morning_gym',   label: 'Gym session', subtitle: '6:00–7:00 AM — Open Workout tab →' });
   if (NO_LLLT_DAYS.includes(day))
-    morning.push({ id: 'morning_ready', label: 'Getting ready, no LLLT' });
+    morning.push({ id: 'morning_ready', label: 'Getting ready — no LLLT today' });
 
   sections.push({ id: 'morning', title: 'Morning', time: '5:00 AM', emoji: '🌅', items: morning });
 
@@ -99,7 +97,6 @@ export const getHabitsForDay = (day) => {
   sections.push({
     id: 'work', title: 'Work', time: '8:30 AM – 5:00 PM', emoji: '💼',
     items: [
-      { id: 'work_job',      label: 'Job application', subtitle: '⏰ 10:00 AM' },
       { id: 'work_linkedin', label: 'LinkedIn activity', subtitle: '⏰ 12:00 PM' },
     ],
   });
@@ -119,7 +116,6 @@ export const getHabitsForDay = (day) => {
     id: 'night', title: 'Night', time: '8:00 PM', emoji: '🌙',
     items: [
       { id: 'night_dinner', label: 'Dinner, phone-free', subtitle: '8:00 PM' },
-      { id: 'night_call',   label: 'Family or friend call', subtitle: '8:30 PM' },
     ],
   });
 
@@ -140,7 +136,6 @@ export const getHabitsForDay = (day) => {
     items: [
       { id: 'night_reading', label: 'Evening book reading (20 min min)', subtitle: '9:30 PM' },
       { id: 'night_journal', label: '3-line journal entry', subtitle: '10:00 PM', isJournal: true },
-      { id: 'night_phone',   label: 'Phone out of bedroom', subtitle: '10:00 PM' },
     ],
   });
 
@@ -151,12 +146,12 @@ export const getHabitsForDay = (day) => {
 export const ALL_HABIT_IDS = [
   'morning_water','morning_meditation','morning_lllt','morning_gym','morning_ready',
   'am_skin_1','am_skin_2','am_skin_3',
-  'hair_rinse','hair_scalp','hair_beard','hair_refill','hair_nizoral_mon',
-  'hair_scalp_pregym','hair_nizoral_wed','hair_cerave','hair_dermaroll',
-  'hair_scalp_sat','hair_rinse_sat','hair_minoxidil',
-  'work_job','work_linkedin',
+  'hair_rinse','hair_beard','hair_refill',
+  'hair_scalp_prewash','hair_nizoral_mon','hair_nizoral_wed','hair_cerave',
+  'hair_rinse_sat','hair_dermaroll','hair_minoxidil',
+  'work_linkedin',
   'eve_meditation','eve_lumber','eve_amazon',
-  'night_dinner','night_call',
+  'night_dinner',
   'pm_skin_1','pm_skin_2','pm_skin_3',
-  'night_reading','night_journal','night_phone',
+  'night_reading','night_journal',
 ];
