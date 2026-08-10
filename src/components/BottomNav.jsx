@@ -1,8 +1,9 @@
-import { Sun, Dumbbell, BarChart2 } from 'lucide-react';
+import { Sun, Dumbbell, Utensils, BarChart2 } from 'lucide-react';
 
 const TABS = [
   { id: 'today',    label: 'Today',   Icon: Sun },
   { id: 'workout',  label: 'Workout', Icon: Dumbbell },
+  { id: 'diet',     label: 'Diet',    Icon: Utensils },
   { id: 'progress', label: 'Progress',Icon: BarChart2 },
 ];
 

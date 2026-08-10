@@ -49,4 +49,24 @@ CREATE INDEX IF NOT EXISTS idx_workout_sets_date       ON public.workout_sets (d
 CREATE INDEX IF NOT EXISTS idx_workout_sets_exercise   ON public.workout_sets (exercise_name);
 CREATE INDEX IF NOT EXISTS idx_journal_entries_date    ON public.journal_entries (date);
 
+-- ============================================================
+-- MIGRATION (2026-08-09) — run once on the EXISTING database.
+-- The deployed workout_sets table was missing this UNIQUE constraint,
+-- so PostgREST .upsert({onConflict}) failed with 42P10 and NO set ever
+-- saved. The app now uses a manual update-then-insert upsert so saving
+-- works without this, but adding the constraint guarantees no duplicate
+-- rows and re-enables native upserts. Safe to run multiple times.
+-- Paste into Supabase dashboard → SQL Editor → Run.
+-- ============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'workout_sets_natural_key'
+  ) THEN
+    ALTER TABLE public.workout_sets
+      ADD CONSTRAINT workout_sets_natural_key
+      UNIQUE (date, session_type, exercise_name, set_index);
+  END IF;
+END $$;
+
 -- Done ✓

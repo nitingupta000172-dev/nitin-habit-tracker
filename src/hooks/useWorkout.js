@@ -1,27 +1,62 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase, toDateStr, offsetDate } from '../lib/supabase';
-import { SESSION_BY_DAY, WORKOUTS, parseMaxReps } from '../data/workouts';
+import { supabase, toDateStr } from '../lib/supabase';
+import { WORKOUTS, parseMaxReps } from '../data/workouts';
 
-export function useWorkout() {
-  const day         = new Date().getDay();
-  const sessionType = SESSION_BY_DAY[day];
-  const session     = WORKOUTS[sessionType] ?? null;
+// Manual upsert by natural key. The deployed workout_sets table is missing the
+// UNIQUE(date,session_type,exercise_name,set_index) constraint, so PostgREST's
+// native .upsert({onConflict}) returns 400 (42P10) and nothing saves. We emulate
+// upsert: UPDATE by natural key, INSERT if no row existed, with a race-safe
+// fallback to UPDATE if a concurrent insert beat us.
+async function saveSet(row) {
+  const key = {
+    date: row.date, session_type: row.session_type,
+    exercise_name: row.exercise_name, set_index: row.set_index,
+  };
+  const fields = { weight: row.weight, reps: row.reps };
+
+  const upd = await supabase.from('workout_sets').update(fields).match(key).select('id');
+  if (upd.error) throw upd.error;
+  if (upd.data?.length) return;
+
+  const ins = await supabase.from('workout_sets').insert(row);
+  if (ins.error) {
+    const retry = await supabase.from('workout_sets').update(fields).match(key).select('id');
+    if (retry.error) throw retry.error;
+    if (!retry.data?.length) throw ins.error;
+  }
+}
+
+/**
+ * Per-session workout logger.
+ *
+ * @param {string} sessionType  the session the user is currently viewing
+ *   (e.g. 'Upper A'). Passed in from WorkoutTab instead of being derived
+ *   from the calendar day, so you can open and log ANY session.
+ *
+ * Save-race fix: fetchToday used to overwrite in-progress typing every time
+ * the app regained focus (constant on a mobile PWA), clobbering unsaved sets
+ * and letting the debounced flush write stale values. We now track "dirty"
+ * (unsaved) sets and merge DB values UNDER local edits on refetch, and we
+ * flush pending saves when the app is hidden or unloaded.
+ */
+export function useWorkout(sessionType) {
+  const session = WORKOUTS[sessionType] ?? null;
 
   // todaySets: { [exerciseName]: { [setIndex]: { weight, reps } } }
-  const [todaySets,    setTodaySets]    = useState({});
-  const [lastSession,  setLastSession]  = useState({});
-  const [lastDate,     setLastDate]     = useState(null);
-  const [overload,     setOverload]     = useState({});
-  const [loading,      setLoading]      = useState(true);
-  const [saveStatus,   setSaveStatus]   = useState('idle');
-  const [gifCache,     setGifCache]     = useState({});
+  const [todaySets,   setTodaySets]   = useState({});
+  const [lastSession, setLastSession] = useState({});
+  const [lastDate,    setLastDate]    = useState(null);
+  const [overload,    setOverload]    = useState({});
+  const [loading,     setLoading]     = useState(true);
+  const [saveStatus,  setSaveStatus]  = useState('idle');
+  const [gifCache,    setGifCache]    = useState({});
 
-  // Ref mirrors todaySets so flush callback always reads current values
-  // without needing todaySets as a closure dependency.
-  const todaySetsRef   = useRef({});
-  const saveQueue      = useRef({});   // { 'ExName::idx': { exerciseName, setIndex } }
-  const saveTimer      = useRef(null);
-  const saveStatusTimer= useRef(null);
+  const todaySetsRef    = useRef({});
+  const saveQueue       = useRef({});          // { 'ExName::idx': { exerciseName, setIndex } }
+  const dirtyKeys       = useRef(new Set());   // keys with unsaved local edits — never clobbered on refetch
+  const flushing        = useRef(false);       // guard: only one flush drains the queue at a time
+  const saveTimer       = useRef(null);
+  const saveStatusTimer = useRef(null);
 
   const syncRef = (next) => { todaySetsRef.current = next; return next; };
 
@@ -32,9 +67,11 @@ export function useWorkout() {
   };
 
   // ── Fetch today's logged sets ─────────────────────────────
+  // Merges DB values UNDER any dirty (unsaved) local edits so refetch-on-focus
+  // never wipes what you're currently typing.
   const fetchToday = useCallback(async () => {
     if (!session) return;
-    const today = toDateStr(); // always fresh local date
+    const today = toDateStr();
     try {
       const { data, error } = await supabase
         .from('workout_sets')
@@ -42,6 +79,7 @@ export function useWorkout() {
         .eq('date', today)
         .eq('session_type', sessionType);
       if (error) throw error;
+
       const map = {};
       data.forEach(r => {
         (map[r.exercise_name] ??= {})[r.set_index] = {
@@ -49,6 +87,16 @@ export function useWorkout() {
           reps:   r.reps   ?? '',
         };
       });
+
+      // Overlay dirty local edits on top of the DB snapshot.
+      const local = todaySetsRef.current;
+      dirtyKeys.current.forEach(key => {
+        const [exName, idxStr] = key.split('::');
+        const idx = Number(idxStr);
+        const localVal = local[exName]?.[idx];
+        if (localVal) (map[exName] ??= {})[idx] = localVal;
+      });
+
       setTodaySets(syncRef(map));
     } catch (e) { console.warn('fetchToday workout:', e.message); }
   }, [session, sessionType]);
@@ -67,11 +115,10 @@ export function useWorkout() {
       if (de) throw de;
 
       const uniqueDates = [...new Set(dateRows.map(r => r.date))].slice(0, 2);
-      if (!uniqueDates.length) return;
+      if (!uniqueDates.length) { setLastDate(null); setLastSession({}); setOverload({}); return; }
 
       setLastDate(uniqueDates[0]);
 
-      // Pre-fill data from last session
       const { data: lastData, error: le } = await supabase
         .from('workout_sets')
         .select('exercise_name, set_index, weight, reps')
@@ -88,8 +135,8 @@ export function useWorkout() {
       });
       setLastSession(lastMap);
 
-      // Progressive overload: were all sets at max reps in BOTH last 2 sessions?
-      if (uniqueDates.length < 2) return;
+      // Progressive overload: all sets at max reps across BOTH last 2 sessions?
+      if (uniqueDates.length < 2) { setOverload({}); return; }
       const { data: prevSets } = await supabase
         .from('workout_sets')
         .select('date, exercise_name, reps')
@@ -97,59 +144,69 @@ export function useWorkout() {
         .eq('session_type', sessionType);
 
       const overloadMap = {};
-      session.exercises.forEach(ex => {
-        const maxReps  = parseMaxReps(ex.reps);
-        const relevant = (prevSets ?? []).filter(r => r.exercise_name === ex.name);
+      session.exercises.forEach(exItem => {
+        const maxReps  = parseMaxReps(exItem.reps);
+        const relevant = (prevSets ?? []).filter(r => r.exercise_name === exItem.name);
         if (!relevant.length) return;
         const byDate = {};
         relevant.forEach(r => { (byDate[r.date] ??= []).push(r.reps); });
         const allHit = Object.values(byDate).every(
           arr => arr.length > 0 && arr.every(rep => rep >= maxReps)
         );
-        if (allHit && Object.keys(byDate).length >= 2) overloadMap[ex.id] = true;
+        if (allHit && Object.keys(byDate).length >= 2) overloadMap[exItem.id] = true;
       });
       setOverload(overloadMap);
     } catch (e) { console.warn('fetchLastSessions:', e.message); }
   }, [session, sessionType]);
 
-  // ── Flush queued saves to Supabase (200ms debounce) ───────
-  // Reads from todaySetsRef so it always has the latest values
-  // with no stale closure dependency on todaySets state.
+  // ── Flush queued saves to Supabase (200 ms debounce) ──────
+  // Serialized: only ONE flush runs at a time and it drains the queue in a
+  // loop. Overlapping flushes are what could otherwise race the manual
+  // update-then-insert into duplicate rows while the DB constraint is absent.
   const flushSets = useCallback(async () => {
-    const queue = { ...saveQueue.current };
-    saveQueue.current = {};
-    if (!Object.keys(queue).length) return;
-
-    const today   = toDateStr();
-    const current = todaySetsRef.current;
+    if (flushing.current) return;                       // a flush is already draining the queue
+    if (!Object.keys(saveQueue.current).length) return;
+    flushing.current = true;
     setSaveStatus('saving');
+    let hadError = false;
     try {
-      await Promise.all(
-        Object.values(queue).map(({ exerciseName, setIndex }) => {
-          const vals = current[exerciseName]?.[setIndex] ?? {};
-          return supabase.from('workout_sets').upsert(
-            {
-              date:          today,
-              session_type:  sessionType,
-              exercise_name: exerciseName,
-              set_index:     setIndex,
-              weight:        parseFloat(vals.weight) || null,
-              reps:          parseInt(vals.reps)     || null,
-            },
-            { onConflict: 'date,session_type,exercise_name,set_index' }
+      while (Object.keys(saveQueue.current).length) {
+        const queue = { ...saveQueue.current };
+        saveQueue.current = {};
+        const keys    = Object.keys(queue);
+        const today   = toDateStr();
+        const current = todaySetsRef.current;
+        try {
+          await Promise.all(
+            Object.values(queue).map(({ exerciseName, setIndex }) => {
+              const vals = current[exerciseName]?.[setIndex] ?? {};
+              return saveSet({
+                date:          today,
+                session_type:  sessionType,
+                exercise_name: exerciseName,
+                set_index:     setIndex,
+                weight:        vals.weight === '' || vals.weight == null ? null : parseFloat(vals.weight),
+                reps:          vals.reps   === '' || vals.reps   == null ? null : parseInt(vals.reps, 10),
+              });
+            })
           );
-        })
-      );
-      markSaved();
-    } catch (e) {
-      console.warn('flushSets:', e.message);
-      setSaveStatus('error');
+          keys.forEach(k => { if (!saveQueue.current[k]) dirtyKeys.current.delete(k); });
+        } catch (e) {
+          console.warn('flushSets:', e.message);
+          keys.forEach(k => { saveQueue.current[k] ??= queue[k]; }); // re-queue for retry
+          hadError = true;
+          break;
+        }
+      }
+    } finally {
+      flushing.current = false;
     }
+    if (hadError) setSaveStatus('error'); else markSaved();
   }, [sessionType]);
 
   // ── Update a set field (called on each keystroke) ─────────
   const updateSet = useCallback((exerciseName, _exerciseId, setIndex, field, value) => {
-    // Merge into state AND ref atomically via the state updater
+    const key = `${exerciseName}::${setIndex}`;
     setTodaySets(prev => {
       const next = {
         ...prev,
@@ -158,14 +215,11 @@ export function useWorkout() {
           [setIndex]: { ...(prev[exerciseName]?.[setIndex] ?? {}), [field]: value },
         },
       };
-      todaySetsRef.current = next; // keep ref in sync
-
-      // Queue this set for flush — store key only; flush reads from ref
-      saveQueue.current[`${exerciseName}::${setIndex}`] = { exerciseName, setIndex };
+      todaySetsRef.current = next;
+      saveQueue.current[key] = { exerciseName, setIndex };
+      dirtyKeys.current.add(key);
       return next;
     });
-
-    // Debounce at 200ms — tight enough to feel instant, avoids per-keystroke writes
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(flushSets, 200);
   }, [flushSets]);
@@ -175,7 +229,14 @@ export function useWorkout() {
     if (gifCache[exerciseName] !== undefined) return;
     setGifCache(p => ({ ...p, [exerciseName]: null }));
     try {
-      const term = exerciseName.replace(/[^a-zA-Z ]/g, '').trim();
+      // Match on the core movement name: drop qualifiers after an em-dash
+      // ("— HSR tempo") and parentheticals ("(neutral grip)") so wger finds it.
+      const term = exerciseName
+        .split('—')[0]
+        .replace(/\(.*?\)/g, '')
+        .replace(/[^a-zA-Z ]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
       const res  = await fetch(
         `https://wger.de/api/v2/exercise/search/?term=${encodeURIComponent(term)}&language=english&format=json`,
         { signal: AbortSignal.timeout(5000) }
@@ -193,8 +254,15 @@ export function useWorkout() {
     } catch (_) { /* SVG fallback shown automatically */ }
   }, [gifCache]);
 
-  // ── Init + visibility re-fetch ────────────────────────────
+  // ── Init + visibility handling (per selected session) ─────
   useEffect(() => {
+    // Reset per-session in-progress state when the selected session changes.
+    // (Refs only — the loading skeleton masks stale data until fetchToday lands,
+    // so no synchronous setState needed here.)
+    saveQueue.current = {};
+    dirtyKeys.current = new Set();
+    todaySetsRef.current = {};
+
     const refresh = () => Promise.all([fetchToday(), fetchLastSessions()]);
 
     const init = async () => {
@@ -204,17 +272,24 @@ export function useWorkout() {
     };
     init();
 
-    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    const onVisible = () => {
+      if (document.visibilityState === 'hidden') flushSets();  // save before leaving
+      else refresh();
+    };
+    const onHide = () => flushSets();
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', refresh);
+    window.addEventListener('pagehide', onHide);
 
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', refresh);
+      window.removeEventListener('pagehide', onHide);
       clearTimeout(saveTimer.current);
       clearTimeout(saveStatusTimer.current);
+      flushSets(); // flush any pending edits when switching sessions/unmounting
     };
-  }, [fetchToday, fetchLastSessions]);
+  }, [fetchToday, fetchLastSessions, flushSets]);
 
   return {
     sessionType, session,

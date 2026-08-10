@@ -2,6 +2,7 @@ import { useState } from 'react';
 import BottomNav from './components/BottomNav';
 import TodayTab from './components/today/TodayTab';
 import WorkoutTab from './components/workout/WorkoutTab';
+import DietTab from './components/diet/DietTab';
 import ProgressTab from './components/progress/ProgressTab';
 import ErrorBoundary from './components/ErrorBoundary';
 
@@ -13,6 +14,7 @@ const TAB_KEY = 'nh_last_tab';
 const TABS = [
   { id: 'today',    Component: TodayTab    },
   { id: 'workout',  Component: WorkoutTab  },
+  { id: 'diet',     Component: DietTab     },
   { id: 'progress', Component: ProgressTab },
 ];
 

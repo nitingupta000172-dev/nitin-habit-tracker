@@ -48,18 +48,21 @@ export function useProgress() {
       .gte('date', since)
       .order('date', { ascending: true });
 
-    if (!data?.length) { setStreakTable([]); setWeakSpots([]); return; }
+    // Exclude diet check-offs (habit_id 'diet:*') — those live in the Diet tab,
+    // not the habit streak table.
+    const rows = (data ?? []).filter(r => !r.habit_id.startsWith('diet:'));
+    if (!rows.length) { setStreakTable([]); setWeakSpots([]); return; }
 
     // Group by habit_id
     const map = {};
-    data.forEach(r => {
+    rows.forEach(r => {
       if (!map[r.habit_id]) map[r.habit_id] = { label: r.habit_label ?? r.habit_id, dates: [], checked: [] };
       map[r.habit_id].dates.push(r.date);
       map[r.habit_id].checked.push(r.checked);
     });
 
     const table = [];
-    const earliest = data[0]?.date;
+    const earliest = rows[0]?.date;
     const daysSince = earliest ? Math.max(1, Math.ceil((new Date(today) - new Date(earliest)) / 86400000) + 1) : 1;
 
     Object.entries(map).forEach(([id, { label, dates, checked }]) => {

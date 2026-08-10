@@ -22,7 +22,7 @@ function playDoubleBeep() {
 }
 
 export default function ExerciseCard({
-  exercise, todaySets, lastSets, lastDate, overload,
+  index, exercise, todaySets, lastSets, lastDate, overload,
   onUpdateSet, fetchGif, gifCache,
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -68,11 +68,12 @@ export default function ExerciseCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-2 flex-wrap">
             <p className="text-[14px] font-semibold text-text-primary leading-tight">
+              {index != null && <span className="text-text-muted">{index}. </span>}
               {exercise.name}
             </p>
-            {exercise.everySession && (
-              <span className="badge bg-accent/15 text-accent text-[9px] font-bold tracking-wide">
-                EVERY SESSION
+            {exercise.optional && (
+              <span className="badge bg-bg-elevated text-text-muted text-[9px] font-bold tracking-wide">
+                OPTIONAL
               </span>
             )}
           </div>
@@ -88,6 +89,9 @@ export default function ExerciseCard({
               {exercise.muscle}
             </span>
             <span className="text-xs text-text-muted">{exercise.sets} × {exercise.reps}</span>
+            {exercise.rest && (
+              <span className="text-[10px] text-text-muted">· rest {exercise.rest}</span>
+            )}
           </div>
 
           {allComplete ? (
