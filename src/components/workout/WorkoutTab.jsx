@@ -97,7 +97,7 @@ export default function WorkoutTab() {
 
       {/* ── Session picker: open ANY plan ──────────────────── */}
       <div className="px-3 pb-1">
-        <div className="grid grid-cols-4 gap-1.5">
+        <div className="grid grid-cols-5 gap-1">
           {ROTATION.map(s => {
             const active = s === sessionType;
             const rel = relDay(lastDoneBySession[s], today);
@@ -114,7 +114,7 @@ export default function WorkoutTab() {
                 {nextDot && !active && (
                   <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-accent" />
                 )}
-                <span className="text-[12px] font-bold leading-none">{s}</span>
+                <span className="text-[11px] font-bold leading-none whitespace-nowrap">{s}</span>
                 <span className={`text-[9px] mt-1 leading-none ${active ? 'text-accent/80' : 'text-text-muted'}`}>
                   {WORKOUTS[s].focus.split(' ')[0]}
                 </span>
