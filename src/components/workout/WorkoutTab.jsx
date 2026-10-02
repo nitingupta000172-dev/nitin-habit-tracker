@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { ChevronDown, Zap, CheckCircle2, History, ArrowRight } from 'lucide-react';
 import { useWorkout } from '../../hooks/useWorkout';
 import { useWorkoutRotation } from '../../hooks/useWorkoutRotation';
@@ -23,12 +23,9 @@ export default function WorkoutTab() {
   const rotation = useWorkoutRotation();
   const { lastDone, lastDoneBySession, recommendedNext, today } = rotation;
 
-  // Selected session — defaults to the rotation's recommendation once known.
+  // Selected session — null until the user taps one, so it follows the
+  // rotation's recommendation (derived below, no effect needed).
   const [selected, setSelected] = useState(null);
-  const [userPicked, setUserPicked] = useState(false);
-  useEffect(() => {
-    if (!userPicked && recommendedNext) setSelected(recommendedNext);
-  }, [recommendedNext, userPicked]);
 
   const sessionType = selected ?? recommendedNext ?? ROTATION[0];
   const {
@@ -105,7 +102,7 @@ export default function WorkoutTab() {
             return (
               <button
                 key={s}
-                onClick={() => { setSelected(s); setUserPicked(true); }}
+                onClick={() => setSelected(s)}
                 className={`relative flex flex-col items-center justify-center rounded-xl px-1 py-2 border transition-all active:scale-95
                   ${active
                     ? 'bg-accent/15 border-accent/50 text-accent'
